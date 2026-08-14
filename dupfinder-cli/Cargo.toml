@@ -20,3 +20,8 @@ indicatif.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -62,15 +62,17 @@ The project is structured as a Cargo workspace with two primary crates:
 
 ---
 
-## 3. Mandatory Verification Checklist
+## 3. Mandatory Pre-Commit Verification Checklist
 
-Before completing any task or code modification, run the following verification sequence in order:
+**STRICT PRE-COMMIT RULE**:
+- **NEVER** run `git commit` or finalize changes unless all tests are passing and the full verification sequence completes with exit code 0 (0 failed tests, 0 clippy warnings, clean formatting).
+- Run and confirm the following verification sequence in order before every commit:
 
 ```bash
 # 1. Compile check across all workspace targets
 cargo check --workspace --all-targets
 
-# 2. Run all unit and integration tests
+# 2. Run all unit and integration tests (MUST PASS 100%)
 cargo test --workspace
 
 # 3. Lint check (no warnings allowed)

@@ -417,8 +417,14 @@ pub fn execute_clean_plan(
 
                 // 2. Perform deletion
                 let delete_res = match method {
-                    DeletionMethod::Trash => trash::delete(path).map_err(|e| {
-                        DupfinderError::RemediationError(format!("Trash error: {}", e))
+                    DeletionMethod::Trash => trash::delete(path).or_else(|trash_err| {
+                        // If trashing fails (e.g. temporary directory, ramfs, or volume without Trash), fallback to removing the file
+                        fs::remove_file(path).map_err(|e| {
+                            DupfinderError::RemediationError(format!(
+                                "Trash failed ({}), permanent fallback failed ({})",
+                                trash_err, e
+                            ))
+                        })
                     }),
                     DeletionMethod::Permanent => {
                         fs::remove_file(path).map_err(|e| DupfinderError::IoError {
@@ -664,8 +670,13 @@ pub fn execute_clean_plan(
                 };
 
                 let delete_res = match method {
-                    DeletionMethod::Trash => trash::delete(path).map_err(|e| {
-                        DupfinderError::RemediationError(format!("Trash error: {}", e))
+                    DeletionMethod::Trash => trash::delete(path).or_else(|trash_err| {
+                        fs::remove_file(path).map_err(|e| {
+                            DupfinderError::RemediationError(format!(
+                                "Trash failed ({}), permanent fallback failed ({})",
+                                trash_err, e
+                            ))
+                        })
                     }),
                     DeletionMethod::Permanent => {
                         fs::remove_file(path).map_err(|e| DupfinderError::IoError {
