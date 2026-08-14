@@ -61,8 +61,7 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Package archive (Unix)
-        if: runner.os != 'Windows'
+      - name: Package archive
         shell: bash
         run: |
           TAG="${{ steps.vars.outputs.tag }}"
@@ -74,26 +73,12 @@ jobs:
           cp README.md LICENSE "dist/${ARCHIVE_DIR}/"
           
           cd dist
-          tar -czvf "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+          else
+            tar -czvf "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+          fi
           shasum -a 256 "${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
-          rm -rf "${ARCHIVE_DIR}"
-
-      - name: Package archive (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          TAG="${{ steps.vars.outputs.tag }}"
-          ARCHIVE_DIR="dupfinder-${TAG}-${{ matrix.target }}"
-          ARCHIVE_FILE="${ARCHIVE_DIR}.${{ matrix.archive_ext }}"
-          
-          mkdir -p "dist/${ARCHIVE_DIR}"
-          cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/${ARCHIVE_DIR}/"
-          cp README.md LICENSE "dist/${ARCHIVE_DIR}/"
-          
-          cd dist
-          7z a "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
-          certutil -hashfile "${ARCHIVE_FILE}" SHA256 | findstr -v "hash" | findstr -v "CertUtil" | tr -d ' \r\n' > "${ARCHIVE_FILE}.sha256"
-          echo "  ${ARCHIVE_FILE}" >> "${ARCHIVE_FILE}.sha256"
           rm -rf "${ARCHIVE_DIR}"
 
       - name: Upload build artifact
@@ -131,7 +116,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
-          name: "${{ steps.vars.outputs.tag }} — Release"
+          name: "${{ steps.vars.outputs.tag }} — Initial Release"
           draft: false
           prerelease: false
           generate_release_notes: true

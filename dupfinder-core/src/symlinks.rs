@@ -50,6 +50,14 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn test_empty_symlinks_list() {
+        let symlinks: Vec<(PathBuf, PathBuf)> = vec![];
+        let broken = find_broken_symlinks(&symlinks, &SilentProgress);
+        assert_eq!(broken.len(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_broken_symlink_detection() {
         let dir = TempDir::new().unwrap();
 
@@ -61,20 +69,8 @@ mod tests {
         let valid_link = dir.path().join("valid_link");
         let broken_link = dir.path().join("broken_link");
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&valid_target, &valid_link).unwrap();
-            std::os::unix::fs::symlink(dir.path().join("nonexistent"), &broken_link).unwrap();
-        }
-
-        #[cfg(not(unix))]
-        {
-            // On non-Unix systems, just test with no symlinks
-            let symlinks: Vec<(PathBuf, PathBuf)> = vec![];
-            let broken = find_broken_symlinks(&symlinks, &SilentProgress);
-            assert_eq!(broken.len(), 0);
-            return;
-        }
+        std::os::unix::fs::symlink(&valid_target, &valid_link).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("nonexistent"), &broken_link).unwrap();
 
         let symlinks = vec![
             (valid_link.clone(), valid_target.clone()),
