@@ -1,52 +1,85 @@
 //! File filtering logic for scan operations.
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::ignore::{get_global_ignore_path, IgnoreRules};
 use crate::types::FilterConfig;
 
-/// Compiled filter that efficiently tests files against configured rules.
+/// Compiled filter that efficiently tests files against configured rules and presets.
 pub struct FileFilter {
     /// Minimum file size in bytes.
     pub min_size: u64,
-    /// Compiled glob patterns for exclusion.
-    exclude_globs: Option<GlobSet>,
-    /// Directory names to skip.
-    pub exclude_dirs: Vec<String>,
+    /// Ignore rules compiled from presets, config files, and CLI options.
+    pub rules: IgnoreRules,
 }
 
 impl FileFilter {
     /// Build a `FileFilter` from the configuration.
     pub fn from_config(config: &FilterConfig) -> Result<Self, globset::Error> {
-        let exclude_globs = if config.exclude_patterns.is_empty() {
-            None
-        } else {
-            let mut builder = GlobSetBuilder::new();
-            for pattern in &config.exclude_patterns {
-                builder.add(Glob::new(pattern)?);
-            }
-            Some(builder.build()?)
+        Self::from_config_with_roots(config, &[])
+    }
+
+    /// Build a `FileFilter` from the configuration and given scan root directories.
+    pub fn from_config_with_roots(
+        config: &FilterConfig,
+        scan_roots: &[PathBuf],
+    ) -> Result<Self, globset::Error> {
+        let mut rules = match config.preset {
+            Some(preset) => IgnoreRules::from_preset(preset, config.include_jars),
+            None => IgnoreRules::empty(),
         };
+
+        // 1. Global ignore file (~/.config/dupfinder/dupignore)
+        if config.use_global_ignore {
+            if let Some(global_path) = get_global_ignore_path() {
+                if global_path.is_file() {
+                    let _ = rules.load_from_file(&global_path);
+                }
+            }
+        }
+
+        // 2. Project-level ignore files (<scan_root>/.dupignore)
+        if config.use_project_ignore {
+            for root in scan_roots {
+                let local_dupignore = root.join(".dupignore");
+                if local_dupignore.is_file() {
+                    let _ = rules.load_from_file(&local_dupignore);
+                }
+            }
+        }
+
+        // 3. Custom ignore files specified explicitly
+        for custom_file in &config.custom_ignore_files {
+            if custom_file.is_file() {
+                let _ = rules.load_from_file(custom_file);
+            }
+        }
+
+        // 4. CLI / user direct exclusions
+        for dir in &config.exclude_dirs {
+            rules.add_dir(dir);
+        }
+
+        for pattern in &config.exclude_patterns {
+            rules.add_pattern(pattern);
+        }
+
+        rules.compile_globs();
 
         Ok(Self {
             min_size: config.min_size,
-            exclude_globs,
-            exclude_dirs: config.exclude_dirs.clone(),
+            rules,
         })
     }
 
     /// Check if a file should be excluded based on glob patterns.
     pub fn is_excluded_by_pattern(&self, path: &Path) -> bool {
-        if let Some(ref globs) = self.exclude_globs {
-            globs.is_match(path)
-        } else {
-            false
-        }
+        self.rules.is_path_excluded(path)
     }
 
     /// Check if a directory name is in the exclusion list.
     pub fn is_excluded_dir(&self, dir_name: &str) -> bool {
-        self.exclude_dirs.iter().any(|d| d == dir_name)
+        self.rules.is_dir_excluded(dir_name)
     }
 
     /// Check if a file meets the minimum size requirement.
@@ -66,6 +99,7 @@ pub fn is_hidden(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ignore::IgnorePreset;
 
     #[test]
     fn test_is_hidden() {
@@ -76,11 +110,14 @@ mod tests {
     }
 
     #[test]
-    fn test_excluded_dir() {
+    fn test_excluded_dir_defaults() {
         let config = FilterConfig::default();
         let filter = FileFilter::from_config(&config).unwrap();
         assert!(filter.is_excluded_dir(".git"));
         assert!(filter.is_excluded_dir("node_modules"));
+        assert!(filter.is_excluded_dir("target"));
+        assert!(filter.is_excluded_dir(".gradle"));
+        assert!(filter.is_excluded_dir("__pycache__"));
         assert!(!filter.is_excluded_dir("src"));
     }
 
@@ -105,6 +142,38 @@ mod tests {
         let filter = FileFilter::from_config(&config).unwrap();
         assert!(filter.is_excluded_by_pattern(Path::new("debug.log")));
         assert!(filter.is_excluded_by_pattern(Path::new("/var/app.tmp")));
+        assert!(filter.is_excluded_by_pattern(Path::new("app.jar")));
         assert!(!filter.is_excluded_by_pattern(Path::new("main.rs")));
+    }
+
+    #[test]
+    fn test_no_presets() {
+        let config = FilterConfig {
+            preset: None,
+            use_global_ignore: false,
+            use_project_ignore: false,
+            exclude_patterns: vec!["*.custom".to_string()],
+            exclude_dirs: vec!["custom_dir".to_string()],
+            ..Default::default()
+        };
+        let filter = FileFilter::from_config(&config).unwrap();
+        assert!(!filter.is_excluded_dir("node_modules"));
+        assert!(!filter.is_excluded_by_pattern(Path::new("app.jar")));
+        assert!(filter.is_excluded_dir("custom_dir"));
+        assert!(filter.is_excluded_by_pattern(Path::new("test.custom")));
+    }
+
+    #[test]
+    fn test_include_jars_toggle() {
+        let config = FilterConfig {
+            preset: Some(IgnorePreset::Default),
+            include_jars: true,
+            use_global_ignore: false,
+            use_project_ignore: false,
+            ..Default::default()
+        };
+        let filter = FileFilter::from_config(&config).unwrap();
+        assert!(!filter.is_excluded_by_pattern(Path::new("app.jar")));
+        assert!(filter.is_excluded_by_pattern(Path::new("main.o")));
     }
 }

@@ -208,11 +208,7 @@ mod tests {
 
         // Set mtime
         let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1000 + mtime_offset);
-        filetime::set_file_mtime(
-            &path,
-            filetime::FileTime::from_system_time(mtime),
-        )
-        .ok(); // May fail on some systems, that's OK for tests
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(mtime)).ok(); // May fail on some systems, that's OK for tests
 
         let metadata = std::fs::metadata(&path).unwrap();
         FileEntry {
@@ -231,8 +227,7 @@ mod tests {
             create_test_file(&dir, "c.txt", "unique content C", 2),
         ];
 
-        let (report, _stats) =
-            find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
+        let (report, _stats) = find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
         assert_eq!(report.total_groups, 0);
         assert_eq!(report.total_redundant_files, 0);
     }
@@ -246,8 +241,7 @@ mod tests {
             create_test_file(&dir, "c.txt", "unique content", 2),
         ];
 
-        let (report, _stats) =
-            find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
+        let (report, _stats) = find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
         assert_eq!(report.total_groups, 1);
         assert_eq!(report.total_redundant_files, 1);
     }
@@ -260,8 +254,7 @@ mod tests {
 
         let files = vec![file_new, file_old.clone()];
 
-        let (report, _stats) =
-            find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
+        let (report, _stats) = find_duplicates(&files, 1, &mut None, &SilentProgress).unwrap();
 
         assert_eq!(report.total_groups, 1);
         // The original should have the earlier mtime

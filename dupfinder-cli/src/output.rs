@@ -54,10 +54,7 @@ impl ProgressHandler for CliProgressHandler {
             bar
         } else {
             let bar = ProgressBar::new_spinner();
-            bar.set_style(
-                ProgressStyle::with_template("{spinner:.green} {msg}")
-                    .unwrap(),
-            );
+            bar.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
             bar
         };
 

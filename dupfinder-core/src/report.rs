@@ -31,10 +31,11 @@ pub fn write_report_to_file(report: &ScanReport, path: &Path) -> Result<()> {
     };
 
     let content = generate_report(report, format)?;
-    let mut file = std::fs::File::create(path).map_err(|e| crate::errors::DupfinderError::IoError {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    let mut file =
+        std::fs::File::create(path).map_err(|e| crate::errors::DupfinderError::IoError {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
     file.write_all(content.as_bytes())
         .map_err(|e| crate::errors::DupfinderError::IoError {
             path: path.to_path_buf(),
@@ -73,12 +74,7 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
     )
     .unwrap();
     writeln!(out, "  Date: {}", report.scan_info.timestamp).unwrap();
-    writeln!(
-        out,
-        "  Duration: {:.1}s",
-        report.scan_info.duration_secs
-    )
-    .unwrap();
+    writeln!(out, "  Duration: {:.1}s", report.scan_info.duration_secs).unwrap();
     writeln!(out, "{}", separator).unwrap();
     writeln!(out).unwrap();
 
@@ -89,9 +85,17 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
             out,
             "  Found {} duplicate group{} ({} redundant file{}, {} reclaimable)",
             report.duplicates.total_groups,
-            if report.duplicates.total_groups == 1 { "" } else { "s" },
+            if report.duplicates.total_groups == 1 {
+                ""
+            } else {
+                "s"
+            },
             report.duplicates.total_redundant_files,
-            if report.duplicates.total_redundant_files == 1 { "" } else { "s" },
+            if report.duplicates.total_redundant_files == 1 {
+                ""
+            } else {
+                "s"
+            },
             format_bytes(report.duplicates.reclaimable_bytes),
         )
         .unwrap();
@@ -143,7 +147,11 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
             out,
             "  Found {} empty file{}",
             report.empty_files.len(),
-            if report.empty_files.len() == 1 { "" } else { "s" },
+            if report.empty_files.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
         )
         .unwrap();
         writeln!(out).unwrap();
@@ -160,7 +168,11 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
             out,
             "  Found {} empty director{}",
             report.empty_dirs.len(),
-            if report.empty_dirs.len() == 1 { "y" } else { "ies" },
+            if report.empty_dirs.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
         )
         .unwrap();
         writeln!(out).unwrap();
@@ -177,7 +189,11 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
             out,
             "  Found {} broken symbolic link{}",
             report.broken_symlinks.len(),
-            if report.broken_symlinks.len() == 1 { "" } else { "s" },
+            if report.broken_symlinks.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
         )
         .unwrap();
         writeln!(out).unwrap();
@@ -208,7 +224,11 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
             out,
             "  Duplicates:       {} group{} ({} redundant, {} reclaimable)",
             report.duplicates.total_groups,
-            if report.duplicates.total_groups == 1 { "" } else { "s" },
+            if report.duplicates.total_groups == 1 {
+                ""
+            } else {
+                "s"
+            },
             report.duplicates.total_redundant_files,
             format_bytes(report.duplicates.reclaimable_bytes),
         )
@@ -217,24 +237,9 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
         writeln!(out, "  Duplicates:       None").unwrap();
     }
 
-    writeln!(
-        out,
-        "  Empty files:      {}",
-        report.empty_files.len()
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  Empty dirs:       {}",
-        report.empty_dirs.len()
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  Broken symlinks:  {}",
-        report.broken_symlinks.len()
-    )
-    .unwrap();
+    writeln!(out, "  Empty files:      {}", report.empty_files.len()).unwrap();
+    writeln!(out, "  Empty dirs:       {}", report.empty_dirs.len()).unwrap();
+    writeln!(out, "  Broken symlinks:  {}", report.broken_symlinks.len()).unwrap();
 
     let total = report.cache_stats.hits + report.cache_stats.misses;
     if total > 0 {

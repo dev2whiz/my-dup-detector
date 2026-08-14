@@ -16,20 +16,23 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Scan directories for duplicates, empty files/folders, and broken symlinks.
-    Scan(commands::scan::ScanArgs),
+    Scan(Box<commands::scan::ScanArgs>),
     /// Manage the hash cache.
     Cache {
         #[command(subcommand)]
         action: commands::cache::CacheAction,
     },
+    /// Manage ignore configurations, default presets, and .dupignore files.
+    Ignore(commands::ignore::IgnoreArgs),
 }
 
 fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Scan(args) => commands::scan::run(args),
+        Commands::Scan(args) => commands::scan::run(*args),
         Commands::Cache { action } => commands::cache::run(action),
+        Commands::Ignore(args) => commands::ignore::run(args),
     };
 
     if let Err(e) = result {

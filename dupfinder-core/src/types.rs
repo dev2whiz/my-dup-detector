@@ -41,6 +41,8 @@ impl Default for FeatureFlags {
     }
 }
 
+use crate::ignore::IgnorePreset;
+
 /// File filtering configuration.
 #[derive(Debug, Clone)]
 pub struct FilterConfig {
@@ -50,6 +52,16 @@ pub struct FilterConfig {
     pub exclude_patterns: Vec<String>,
     /// Directory names to skip entirely.
     pub exclude_dirs: Vec<String>,
+    /// Active ignore preset (default: IgnorePreset::Default).
+    pub preset: Option<IgnorePreset>,
+    /// Whether to scan JAR/archive files even when using presets (default: false = JARs ignored).
+    pub include_jars: bool,
+    /// Whether to load the user's global ignore file (~/.config/dupfinder/dupignore) if present.
+    pub use_global_ignore: bool,
+    /// Whether to load `<scan_root>/.dupignore` if present in scanned directories.
+    pub use_project_ignore: bool,
+    /// Explicit custom ignore files to load.
+    pub custom_ignore_files: Vec<PathBuf>,
 }
 
 impl Default for FilterConfig {
@@ -57,12 +69,12 @@ impl Default for FilterConfig {
         Self {
             min_size: 1,
             exclude_patterns: Vec::new(),
-            exclude_dirs: vec![
-                ".git".to_string(),
-                "node_modules".to_string(),
-                "__pycache__".to_string(),
-                ".DS_Store".to_string(),
-            ],
+            exclude_dirs: Vec::new(),
+            preset: Some(IgnorePreset::Default),
+            include_jars: false,
+            use_global_ignore: true,
+            use_project_ignore: true,
+            custom_ignore_files: Vec::new(),
         }
     }
 }

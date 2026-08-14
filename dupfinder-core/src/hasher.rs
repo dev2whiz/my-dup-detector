@@ -21,10 +21,12 @@ pub fn partial_hash(path: &Path) -> Result<String, DupfinderError> {
     })?;
 
     let mut buffer = vec![0u8; PARTIAL_HASH_SIZE];
-    let bytes_read = file.read(&mut buffer).map_err(|e| DupfinderError::IoError {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    let bytes_read = file
+        .read(&mut buffer)
+        .map_err(|e| DupfinderError::IoError {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
 
     buffer.truncate(bytes_read);
     let hash = blake3::hash(&buffer);
@@ -44,10 +46,12 @@ pub fn full_hash(path: &Path) -> Result<String, DupfinderError> {
     let mut buffer = vec![0u8; 64 * 1024]; // 64KB read buffer
 
     loop {
-        let bytes_read = file.read(&mut buffer).map_err(|e| DupfinderError::IoError {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+        let bytes_read = file
+            .read(&mut buffer)
+            .map_err(|e| DupfinderError::IoError {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
 
         if bytes_read == 0 {
             break;

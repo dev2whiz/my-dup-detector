@@ -149,19 +149,43 @@ cargo run --bin dupfinder -- scan ~/Documents --no-empty-files --no-broken-links
 cargo run --bin dupfinder -- scan ~/Documents --no-empty-files --no-empty-dirs --no-broken-links
 ```
 
-### Filtering Options
+### Filtering & Ignore Options
 ```bash
 # Set minimum file size threshold (e.g. 10KB, 5MB)
 cargo run --bin dupfinder -- scan ~/Documents --min-size 10KB
 
-# Exclude glob pattern
-cargo run --bin dupfinder -- scan ~/Documents --exclude "*.tmp" --exclude "*.log"
+# Use specific ignore preset: default, build, deps, jars, minimal, none
+cargo run --bin dupfinder -- scan ~/Workspace --exclude-preset build
 
-# Exclude directory names
-cargo run --bin dupfinder -- scan ~/Documents --exclude-dir build --exclude-dir target
+# Keep default presets but scan JAR/archive files
+cargo run --bin dupfinder -- scan ~/Workspace --include-jars
+
+# Disable all default presets
+cargo run --bin dupfinder -- scan ~/Documents --no-default-ignores
+
+# Load explicit custom ignore file
+cargo run --bin dupfinder -- scan ~/Workspace --ignore-file .custom_ignore
+
+# Exclude specific glob pattern or directory
+cargo run --bin dupfinder -- scan ~/Documents --exclude "*.tmp" --exclude-dir build
 
 # Include hidden files (dotfiles)
 cargo run --bin dupfinder -- scan ~/Documents --include-hidden
+```
+
+### Ignore Configuration Management
+```bash
+# Display built-in default ignore categories, directories, and patterns
+cargo run --bin dupfinder -- ignore show-defaults
+
+# Generate a starter .dupignore file in the current directory
+cargo run --bin dupfinder -- ignore init
+
+# Generate a starter global ignore file (~/.config/dupfinder/dupignore)
+cargo run --bin dupfinder -- ignore init --global
+
+# Show the path to the global user ignore file
+cargo run --bin dupfinder -- ignore path
 ```
 
 ### Output Formats & Reporting

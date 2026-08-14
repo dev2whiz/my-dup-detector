@@ -46,9 +46,8 @@ impl HashCache {
         let cache_path = cache_dir.join("cache.json");
 
         let data = if cache_path.exists() {
-            let content = fs::read_to_string(&cache_path).map_err(|e| {
-                DupfinderError::CacheError(format!("Failed to read cache: {}", e))
-            })?;
+            let content = fs::read_to_string(&cache_path)
+                .map_err(|e| DupfinderError::CacheError(format!("Failed to read cache: {}", e)))?;
             serde_json::from_str(&content).unwrap_or_default()
         } else {
             CacheData {
@@ -116,9 +115,8 @@ impl HashCache {
         }
 
         let json = serde_json::to_string_pretty(&self.data)?;
-        fs::write(&self.cache_path, json).map_err(|e| {
-            DupfinderError::CacheError(format!("Failed to write cache: {}", e))
-        })?;
+        fs::write(&self.cache_path, json)
+            .map_err(|e| DupfinderError::CacheError(format!("Failed to write cache: {}", e)))?;
 
         Ok(())
     }
@@ -196,9 +194,8 @@ pub fn clear_cache(config: &CacheConfig) -> Result<()> {
     let dir = cache_dir(config);
     let path = dir.join("cache.json");
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| {
-            DupfinderError::CacheError(format!("Failed to delete cache: {}", e))
-        })?;
+        fs::remove_file(&path)
+            .map_err(|e| DupfinderError::CacheError(format!("Failed to delete cache: {}", e)))?;
     }
     Ok(())
 }

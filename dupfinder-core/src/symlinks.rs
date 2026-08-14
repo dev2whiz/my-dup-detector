@@ -21,10 +21,7 @@ pub fn find_broken_symlinks(
         let resolved_target = if target_path.is_absolute() {
             target_path.clone()
         } else {
-            link_path
-                .parent()
-                .unwrap_or(link_path)
-                .join(target_path)
+            link_path.parent().unwrap_or(link_path).join(target_path)
         };
 
         // Check if the resolved target exists
@@ -67,11 +64,7 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&valid_target, &valid_link).unwrap();
-            std::os::unix::fs::symlink(
-                dir.path().join("nonexistent"),
-                &broken_link,
-            )
-            .unwrap();
+            std::os::unix::fs::symlink(dir.path().join("nonexistent"), &broken_link).unwrap();
         }
 
         #[cfg(not(unix))]

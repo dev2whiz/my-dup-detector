@@ -37,7 +37,10 @@ pub fn run(action: CacheAction) -> Result<()> {
             println!("dupfinder cache info");
             println!("────────────────────────────────────");
             println!("  Cache path:    {}", info.path.display());
-            println!("  Exists:        {}", if info.exists { "yes" } else { "no" });
+            println!(
+                "  Exists:        {}",
+                if info.exists { "yes" } else { "no" }
+            );
             println!("  Entries:       {}", info.entry_count);
             println!(
                 "  File size:     {}",

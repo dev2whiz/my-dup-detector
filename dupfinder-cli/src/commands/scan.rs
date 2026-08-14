@@ -50,6 +50,30 @@ pub struct ScanArgs {
     #[arg(long)]
     pub include_hidden: bool,
 
+    /// Built-in ignore preset: default, build, deps, jars, minimal, none.
+    #[arg(long, value_name = "PRESET")]
+    pub exclude_preset: Option<String>,
+
+    /// Disable built-in default ignore presets.
+    #[arg(long)]
+    pub no_default_ignores: bool,
+
+    /// Explicit custom ignore file to load (repeatable).
+    #[arg(long = "ignore-file", value_name = "PATH")]
+    pub ignore_files: Vec<PathBuf>,
+
+    /// Scan JAR and archive files (overrides exclusion in presets).
+    #[arg(long)]
+    pub include_jars: bool,
+
+    /// Disable loading global ignore file (~/.config/dupfinder/dupignore).
+    #[arg(long)]
+    pub no_global_ignore: bool,
+
+    /// Disable loading local project ignore files (<scan_root>/.dupignore).
+    #[arg(long)]
+    pub no_project_ignore: bool,
+
     /// Maximum recursion depth (0 = current directory only).
     #[arg(long, short = 'd')]
     pub depth: Option<usize>,
@@ -125,17 +149,19 @@ pub fn run(args: ScanArgs) -> Result<()> {
 
     let min_size = parse_size(&args.min_size)?;
 
-    // Merge user-specified exclude dirs with defaults
-    let mut exclude_dirs = vec![
-        ".git".to_string(),
-        "node_modules".to_string(),
-        "__pycache__".to_string(),
-    ];
-    for dir in &args.exclude_dir {
-        if !exclude_dirs.contains(dir) {
-            exclude_dirs.push(dir.clone());
+    let preset = if args.no_default_ignores {
+        None
+    } else if let Some(ref preset_name) = args.exclude_preset {
+        match dupfinder_core::ignore::IgnorePreset::from_str_name(preset_name) {
+            Some(p) => Some(p),
+            None => anyhow::bail!(
+                "Invalid preset: '{}'. Valid presets: default, build, deps, jars, minimal, none",
+                preset_name
+            ),
         }
-    }
+    } else {
+        Some(dupfinder_core::ignore::IgnorePreset::Default)
+    };
 
     let config = ScanConfig {
         paths: args.paths,
@@ -148,7 +174,12 @@ pub fn run(args: ScanArgs) -> Result<()> {
         filters: FilterConfig {
             min_size,
             exclude_patterns: args.exclude,
-            exclude_dirs,
+            exclude_dirs: args.exclude_dir,
+            preset,
+            include_jars: args.include_jars,
+            use_global_ignore: !args.no_global_ignore,
+            use_project_ignore: !args.no_project_ignore,
+            custom_ignore_files: args.ignore_files,
         },
         cache_config: CacheConfig {
             enabled: !args.no_cache,
@@ -162,8 +193,7 @@ pub fn run(args: ScanArgs) -> Result<()> {
     let progress = CliProgressHandler::new(args.quiet);
 
     // Run the scan
-    let scan_report = dupfinder_core::scan(config, &progress)
-        .context("Scan failed")?;
+    let scan_report = dupfinder_core::scan(config, &progress).context("Scan failed")?;
 
     // Finish progress bars
     progress.finish();
@@ -176,8 +206,8 @@ pub fn run(args: ScanArgs) -> Result<()> {
     };
 
     // Generate and output report
-    let report_str = report::generate_report(&scan_report, format)
-        .context("Failed to generate report")?;
+    let report_str =
+        report::generate_report(&scan_report, format).context("Failed to generate report")?;
 
     // Write to file if specified
     if let Some(ref output_path) = args.output {

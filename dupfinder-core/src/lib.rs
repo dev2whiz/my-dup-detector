@@ -10,6 +10,7 @@ pub mod empty;
 pub mod errors;
 pub mod filter;
 pub mod hasher;
+pub mod ignore;
 pub mod progress;
 pub mod report;
 pub mod scanner;
@@ -23,9 +24,7 @@ use chrono::Utc;
 use errors::Result;
 use filter::FileFilter;
 use progress::ProgressHandler;
-use types::{
-    CacheStats, DuplicateReport, ScanConfig, ScanInfo, ScanPhase, ScanReport,
-};
+use types::{CacheStats, DuplicateReport, ScanConfig, ScanInfo, ScanPhase, ScanReport};
 
 /// The current version of dupfinder.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -41,7 +40,7 @@ pub fn scan(config: ScanConfig, progress: &dyn ProgressHandler) -> Result<ScanRe
     let timestamp = Utc::now().to_rfc3339();
 
     // Build the file filter
-    let file_filter = FileFilter::from_config(&config.filters)?;
+    let file_filter = FileFilter::from_config_with_roots(&config.filters, &config.paths)?;
 
     // ── Phase 1: Directory traversal ─────────────────────────────────────────
     let scan_result = scanner::scan_directories(
