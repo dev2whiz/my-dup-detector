@@ -250,3 +250,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 - Avoid hardcoded path separators (`/` or `\`).
 - Use the `dirs` crate for OS-specific cache and config directories (`~/Library/Caches` on macOS, `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows).
 - Symlink operations should be platform-gated or gracefully handled on platforms where privileges are restricted (e.g. Windows non-admin).
+
+---
+
+## 9. Release & Version Management
+
+For version bumping policies, release checklists, crates.io publishing procedures, and multi-platform packaging:
+- See the dedicated [Release Guide (`RELEASING.md`)](RELEASING.md).
+- Version history is tracked in [Changelog (`CHANGELOG.md`)](CHANGELOG.md).
+

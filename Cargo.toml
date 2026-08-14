@@ -1,6 +1,31 @@
 [workspace]
-members = [
-    "dupfinder-core",
-    "dupfinder-cli",
-]
+members = ["dupfinder-core", "dupfinder-cli"]
 resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.70"
+readme = "README.md"
+repository = "https://github.com/dev2whiz/my-dup-detector"
+authors = ["Dev2Whiz <dev2whiz@gmail.com>"]
+keywords = ["duplicate", "dedup", "cli", "blake3", "scanner"]
+categories = ["command-line-utilities", "filesystem"]
+
+[workspace.dependencies]
+dupfinder-core = { version = "0.1.0", path = "dupfinder-core" }
+blake3 = "1"
+rayon = "1"
+walkdir = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+globset = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+dirs = "6"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+anyhow = "1"
+tempfile = "3"
+filetime = "0.2"

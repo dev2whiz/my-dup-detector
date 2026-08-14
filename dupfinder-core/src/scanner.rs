@@ -86,7 +86,7 @@ pub fn scan_directories(
             if entry.file_type().is_dir() {
                 let count = dir_count.fetch_add(1, Ordering::Relaxed) + 1;
                 directories.push(path);
-                if count.is_multiple_of(100) {
+                if count % 100 == 0 {
                     progress.on_progress(
                         ScanPhase::DirectoryTraversal,
                         count,
@@ -114,7 +114,7 @@ pub fn scan_directories(
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
                 let count = file_count.fetch_add(1, Ordering::Relaxed) + 1;
-                if count.is_multiple_of(500) {
+                if count % 500 == 0 {
                     progress.on_progress(
                         ScanPhase::DirectoryTraversal,
                         count,
