@@ -61,7 +61,8 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Package archive
+      - name: Package archive (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           TAG="${{ steps.vars.outputs.tag }}"
@@ -73,13 +74,31 @@ jobs:
           cp README.md LICENSE "dist/${ARCHIVE_DIR}/"
           
           cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+          tar -czvf "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
           else
-            tar -czvf "${ARCHIVE_FILE}" "${ARCHIVE_DIR}"
+            shasum -a 256 "${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
           fi
-          shasum -a 256 "${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
           rm -rf "${ARCHIVE_DIR}"
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $TAG = "${{ steps.vars.outputs.tag }}"
+          $ARCHIVE_DIR = "dupfinder-${TAG}-${{ matrix.target }}"
+          $ARCHIVE_FILE = "${ARCHIVE_DIR}.${{ matrix.archive_ext }}"
+          
+          New-Item -ItemType Directory -Force -Path "dist/$ARCHIVE_DIR"
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "dist/$ARCHIVE_DIR/"
+          Copy-Item "README.md" "dist/$ARCHIVE_DIR/"
+          Copy-Item "LICENSE" "dist/$ARCHIVE_DIR/"
+          
+          Compress-Archive -Path "dist/$ARCHIVE_DIR/*" -DestinationPath "dist/$ARCHIVE_FILE" -Force
+          $HASH = (Get-FileHash -Path "dist/$ARCHIVE_FILE" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$ARCHIVE_FILE.sha256" -Value "$HASH  $ARCHIVE_FILE"
+          Remove-Item -Recurse -Force "dist/$ARCHIVE_DIR"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
