@@ -14,7 +14,7 @@ name = "dupfinder"
 path = "src/main.rs"
 
 [dependencies]
-dupfinder-core = { version = "0.1.0", path = "../dupfinder-core" }
+dupfinder-core = { version = "0.2.0", path = "../dupfinder-core" }
 clap.workspace = true
 indicatif.workspace = true
 anyhow.workspace = true

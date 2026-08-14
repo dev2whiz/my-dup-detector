@@ -3,7 +3,7 @@ members = ["dupfinder-core", "dupfinder-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.70"
@@ -14,7 +14,7 @@ keywords = ["duplicate", "dedup", "cli", "blake3", "scanner"]
 categories = ["command-line-utilities", "filesystem"]
 
 [workspace.dependencies]
-dupfinder-core = { version = "0.1.0", path = "dupfinder-core" }
+dupfinder-core = { version = "0.2.0", path = "dupfinder-core" }
 blake3 = "1"
 rayon = "1"
 walkdir = "2"
