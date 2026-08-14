@@ -3,7 +3,7 @@ members = ["dupfinder-core", "dupfinder-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.70"
@@ -14,7 +14,7 @@ keywords = ["duplicate", "dedup", "cli", "blake3", "scanner"]
 categories = ["command-line-utilities", "filesystem"]
 
 [workspace.dependencies]
-dupfinder-core = { version = "0.1.0", path = "dupfinder-core" }
+dupfinder-core = { version = "0.2.0", path = "dupfinder-core" }
 blake3 = "1"
 rayon = "1"
 walkdir = "2"
@@ -29,3 +29,9 @@ indicatif = "0.17"
 anyhow = "1"
 tempfile = "3"
 filetime = "0.2"
+trash = "5"
+reflink-copy = "0.1"
+ratatui = "0.29"
+crossterm = "0.28"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif"] }
+image_hasher = "3"

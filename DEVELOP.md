@@ -26,13 +26,13 @@ This guide provides instructions for building, testing, and contributing to **`d
 ```
 my-dup-detector/
 ├── Cargo.toml                  # Workspace manifest
+├── AGENTS.md                   # AI Agent invariants & safety standards
 ├── DEVELOP.md                  # Development & testing guide
+├── RELEASING.md                # Release procedures & SemVer policies
+├── CHANGELOG.md                # Version changelog
 ├── README.md                   # User documentation
 ├── LICENSE                     # MIT License
-├── docs/
-│   └── plans/
-│       └── 01-implementation-plan.md  # Architectural specification
-├── dupfinder-core/             # Core detection & processing library
+├── dupfinder-core/             # Headless core detection & remediation library
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs              # Public scan API entry point
@@ -40,6 +40,9 @@ my-dup-detector/
 │       ├── scanner.rs          # Directory traversal & discovery
 │       ├── hasher.rs           # BLAKE3 partial and full hashing
 │       ├── dedup.rs            # 3-stage duplicate detection pipeline
+│       ├── image_sim.rs        # Perceptual image hashing & clustering
+│       ├── clean.rs            # Safe deletion, hardlinking, and reflink engine
+│       ├── safety.rs           # Path blacklist, sentinel checks, TOCTOU validation
 │       ├── empty.rs            # Empty file & folder detection
 │       ├── symlinks.rs         # Broken symlink detection
 │       ├── cache.rs            # JSON hash cache management
@@ -47,7 +50,7 @@ my-dup-detector/
 │       ├── progress.rs         # Progress reporting trait
 │       ├── report.rs           # JSON & text report formatting
 │       └── errors.rs           # Error definitions
-└── dupfinder-cli/              # CLI executable
+└── dupfinder-cli/              # CLI executable & user interface
     ├── Cargo.toml
     └── src/
         ├── main.rs             # CLI entry point & clap dispatch
@@ -55,7 +58,10 @@ my-dup-detector/
         └── commands/
             ├── mod.rs
             ├── scan.rs         # `dupfinder scan` implementation
-            └── cache.rs        # `dupfinder cache` implementation
+            ├── clean.rs        # `dupfinder clean` remediation command
+            ├── tui.rs          # `dupfinder tui` interactive terminal inspector
+            ├── ignore.rs       # `dupfinder ignore` preset & config manager
+            └── cache.rs        # `dupfinder cache` management
 ```
 
 ---
@@ -86,9 +92,9 @@ cargo build -p dupfinder-cli
 
 ## 4. Running Tests
 
-### Run All Unit Tests
+### Run All Unit & Integration Tests (Workspace)
 ```bash
-cargo test
+cargo test --workspace
 ```
 
 ### Run Tests for Core Library Only
@@ -96,30 +102,32 @@ cargo test
 cargo test -p dupfinder-core
 ```
 
-### Run Specific Test Suites / Modules
+### Run Tests for CLI & TUI Only
+```bash
+cargo test -p dupfinder-cli
+```
+
+### Run Specific Test Modules
 ```bash
 # Run dedup pipeline tests
 cargo test -p dupfinder-core dedup
 
-# Run hashing tests
-cargo test -p dupfinder-core hasher
+# Run perceptual image similarity tests
+cargo test -p dupfinder-core image_sim
 
-# Run cache tests
-cargo test -p dupfinder-core cache
+# Run safe cleanup & hardlinking tests
+cargo test -p dupfinder-core clean
 
-# Run filtering tests
-cargo test -p dupfinder-core filter
+# Run safety & path protection tests
+cargo test -p dupfinder-core safety
 
-# Run empty file/folder tests
-cargo test -p dupfinder-core empty
-
-# Run symlink tests
-cargo test -p dupfinder-core symlinks
+# Run TUI unit tests
+cargo test -p dupfinder-cli commands::tui
 ```
 
 ### Run Tests with Verbose Output
 ```bash
-cargo test -- --nocapture
+cargo test --workspace -- --nocapture
 ```
 
 ---
@@ -128,7 +136,7 @@ cargo test -- --nocapture
 
 You can execute the CLI binary directly through Cargo using `cargo run`:
 
-### Basic Scans
+### Basic & Perceptual Image Scans
 ```bash
 # Scan a directory
 cargo run --bin dupfinder -- scan /path/to/dir
@@ -136,17 +144,35 @@ cargo run --bin dupfinder -- scan /path/to/dir
 # Scan multiple directories
 cargo run --bin dupfinder -- scan ~/Documents ~/Downloads
 
+# Scan for visually similar images (e.g. 90% similarity threshold)
+cargo run --bin dupfinder -- scan ~/Pictures --similar-images --similarity 0.90
+
 # Limit recursion depth
 cargo run --bin dupfinder -- scan . --depth 2
 ```
 
-### Detection Feature Flags
+### Interactive Terminal UI Inspector
 ```bash
-# Disable specific detectors
-cargo run --bin dupfinder -- scan ~/Documents --no-empty-files --no-broken-links
+# Launch interactive TUI
+cargo run --bin dupfinder -- tui ~/Documents ~/Downloads
+```
 
-# Only check for duplicates
-cargo run --bin dupfinder -- scan ~/Documents --no-empty-files --no-empty-dirs --no-broken-links
+### Safe Cleanup & Remediation Commands
+```bash
+# Dry-run preview
+cargo run --bin dupfinder -- clean ~/Downloads --dry-run
+
+# Interactive review mode
+cargo run --bin dupfinder -- clean -i ~/Downloads
+
+# Hardlink deduplication (replace duplicate files with POSIX/NTFS hardlinks)
+cargo run --bin dupfinder -- clean ~/Documents --hardlink
+
+# Copy-on-Write reflink deduplication (macOS APFS clone / Linux FICLONE)
+cargo run --bin dupfinder -- clean ~/Documents --reflink
+
+# Export audit remediation manifest
+cargo run --bin dupfinder -- clean ~/Documents --manifest audit.json
 ```
 
 ### Filtering & Ignore Options
@@ -220,42 +246,36 @@ cargo run --bin dupfinder -- scan ~/Documents --no-cache
 
 ## 6. Code Formatting & Linting
 
-Before submitting changes, ensure the code complies with standard Rust styling and lints:
+Before submitting changes, ensure the code complies with the mandatory 4-gate verification sequence:
 
 ```bash
-# Check formatting
+# 1. Compile check
+cargo check --workspace --all-targets
+
+# 2. Run all unit and integration tests (MUST PASS 100%)
+cargo test --workspace
+
+# 3. Lint check (no warnings allowed)
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# 4. Code formatting check
 cargo fmt --all -- --check
-
-# Format code
-cargo fmt --all
-
-# Run clippy linter
-cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ---
 
-## 7. Adding New Features
-
-1. **Detection Logic**: Implement new detection algorithms in `dupfinder-core/src/` with accompanying unit tests.
-2. **Configuration & Data Types**: Update `dupfinder-core/src/types.rs` if introducing new scan options or report fields.
-3. **CLI Arguments**: Expose new flags/options in `dupfinder-cli/src/commands/scan.rs` or create new subcommands in `dupfinder-cli/src/commands/`.
-4. **Reporting**: Update text and JSON rendering in `dupfinder-core/src/report.rs`.
-
----
-
-## 8. Cross-Platform Guidelines
+## 7. Cross-Platform Guidelines
 
 - Use `Path` / `PathBuf` instead of string manipulations for all filesystem paths.
 - Avoid hardcoded path separators (`/` or `\`).
 - Use the `dirs` crate for OS-specific cache and config directories (`~/Library/Caches` on macOS, `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows).
-- Symlink operations should be platform-gated or gracefully handled on platforms where privileges are restricted (e.g. Windows non-admin).
+- Use `trash` crate for Recycle Bin / Trash integration.
+- For platform-specific features (macOS APFS `clonefile`, Linux `FICLONE`), ensure fallback and conditional compilation.
 
 ---
 
-## 9. Release & Version Management
+## 8. Release & Version Management
 
 For version bumping policies, release checklists, crates.io publishing procedures, and multi-platform packaging:
 - See the dedicated [Release Guide (`RELEASING.md`)](RELEASING.md).
 - Version history is tracked in [Changelog (`CHANGELOG.md`)](CHANGELOG.md).
-

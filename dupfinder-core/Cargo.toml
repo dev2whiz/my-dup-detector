@@ -19,6 +19,10 @@ globset.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
+trash.workspace = true
+reflink-copy.workspace = true
+image.workspace = true
+image_hasher.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

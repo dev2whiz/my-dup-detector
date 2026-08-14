@@ -29,6 +29,22 @@ pub enum DupfinderError {
     /// A configuration error.
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    /// A safety protection error preventing operations on protected/system paths.
+    #[error("Safety protection error at '{path}': {reason}")]
+    ProtectedPathError { path: PathBuf, reason: String },
+
+    /// An original preservation invariant error.
+    #[error("Original preservation violation: {0}")]
+    OriginalPreservationError(String),
+
+    /// A TOCTOU / file-state-changed error.
+    #[error("File state changed since scan at '{path}': {reason}")]
+    StateChangedError { path: PathBuf, reason: String },
+
+    /// A general remediation or cleanup error.
+    #[error("Remediation error: {0}")]
+    RemediationError(String),
 }
 
 /// Result type alias for dupfinder operations.

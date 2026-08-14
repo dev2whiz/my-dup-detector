@@ -33,6 +33,14 @@ pub struct ScanArgs {
     #[arg(long)]
     pub no_broken_links: bool,
 
+    /// Detect visually similar and modified images using perceptual hashing.
+    #[arg(long)]
+    pub similar_images: bool,
+
+    /// Visual similarity threshold percentage (0.0 to 1.0, default: 0.90).
+    #[arg(long, default_value_t = 0.90)]
+    pub similarity: f64,
+
     // ── Filtering ────────────────────────────────────────────────────────
     /// Minimum file size to consider (e.g., 1024, 1KB, 1MB).
     #[arg(long, default_value = "1")]
@@ -170,6 +178,8 @@ pub fn run(args: ScanArgs) -> Result<()> {
             empty_files: !args.no_empty_files,
             empty_dirs: !args.no_empty_dirs,
             broken_links: !args.no_broken_links,
+            similar_images: args.similar_images,
+            similarity_threshold: args.similarity,
         },
         filters: FilterConfig {
             min_size,

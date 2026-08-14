@@ -17,6 +17,10 @@ struct Cli {
 enum Commands {
     /// Scan directories for duplicates, empty files/folders, and broken symlinks.
     Scan(Box<commands::scan::ScanArgs>),
+    /// Safely clean and remediate duplicate files, empty files, and empty directories.
+    Clean(Box<commands::clean::CleanArgs>),
+    /// Launch interactive Terminal UI inspector.
+    Tui(Box<commands::tui::TuiArgs>),
     /// Manage the hash cache.
     Cache {
         #[command(subcommand)]
@@ -31,6 +35,8 @@ fn main() {
 
     let result = match cli.command {
         Commands::Scan(args) => commands::scan::run(*args),
+        Commands::Clean(args) => commands::clean::run(*args),
+        Commands::Tui(args) => commands::tui::run(*args),
         Commands::Cache { action } => commands::cache::run(action),
         Commands::Ignore(args) => commands::ignore::run(args),
     };
