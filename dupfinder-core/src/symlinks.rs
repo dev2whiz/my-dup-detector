@@ -17,6 +17,14 @@ pub fn find_broken_symlinks(
     let mut broken = Vec::new();
 
     for (link_path, target_path) in symlinks {
+        if target_path.as_os_str().is_empty() {
+            broken.push(BrokenSymlink {
+                link_path: link_path.clone(),
+                target_path: PathBuf::from("<unresolvable>"),
+            });
+            continue;
+        }
+
         // Resolve the symlink target relative to the link's parent directory
         let resolved_target = if target_path.is_absolute() {
             target_path.clone()
@@ -47,7 +55,6 @@ pub fn find_broken_symlinks(
 mod tests {
     use super::*;
     use crate::progress::SilentProgress;
-    use tempfile::TempDir;
 
     #[test]
     fn test_empty_symlinks_list() {
@@ -56,9 +63,19 @@ mod tests {
         assert_eq!(broken.len(), 0);
     }
 
+    #[test]
+    fn test_unresolvable_symlink_marked_broken() {
+        let symlinks = vec![(PathBuf::from("/some/link"), PathBuf::new())];
+        let broken = find_broken_symlinks(&symlinks, &SilentProgress);
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].link_path, PathBuf::from("/some/link"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_broken_symlink_detection() {
+        use tempfile::TempDir;
+
         let dir = TempDir::new().unwrap();
 
         // Create a valid target file
