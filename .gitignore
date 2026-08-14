@@ -14,3 +14,6 @@ Thumbs.db
 
 # Rust
 **/*.rs.bk
+
+# Local documentation & working plans
+/docs/
