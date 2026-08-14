@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "dupfinder-core",
+    "dupfinder-cli",
+]
+resolver = "2"
