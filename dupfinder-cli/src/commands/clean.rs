@@ -167,6 +167,8 @@ pub fn run(args: CleanArgs) -> Result<()> {
             empty_files: args.clean_empty_files,
             empty_dirs: args.clean_empty_dirs,
             broken_links: false,
+            similar_images: false,
+            similarity_threshold: 0.90,
         },
         filters: filter_config,
         cache_config: CacheConfig::default(),

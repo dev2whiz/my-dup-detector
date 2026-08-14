@@ -828,6 +828,7 @@ mod tests {
                     duplicates: vec![duplicate_file],
                 }],
             },
+            similar_images: None,
             empty_files: vec![],
             empty_dirs: vec![],
             broken_symlinks: vec![],

@@ -12,6 +12,7 @@ pub mod errors;
 pub mod filter;
 pub mod hasher;
 pub mod ignore;
+pub mod image_sim;
 pub mod progress;
 pub mod report;
 pub mod safety;
@@ -35,7 +36,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// This is the main entry point for the core library. It:
 /// 1. Traverses directories to discover files
-/// 2. Runs enabled detection features (duplicates, empty files/dirs, broken symlinks)
+/// 2. Runs enabled detection features (duplicates, empty files/dirs, broken symlinks, similar images)
 /// 3. Returns a complete scan report
 pub fn scan(config: ScanConfig, progress: &dyn ProgressHandler) -> Result<ScanReport> {
     let start_time = Instant::now();
@@ -80,21 +81,33 @@ pub fn scan(config: ScanConfig, progress: &dyn ProgressHandler) -> Result<ScanRe
         }
     }
 
-    // ── Phase 3: Empty file detection ────────────────────────────────────────
+    // ── Phase 3: Perceptual Image Similarity Detection ──────────────────────
+    let similar_images = if config.features.similar_images {
+        let sim_report = image_sim::find_similar_images(
+            &scan_result.files,
+            config.features.similarity_threshold,
+            progress,
+        )?;
+        Some(sim_report)
+    } else {
+        None
+    };
+
+    // ── Phase 4: Empty file detection ────────────────────────────────────────
     let empty_files = if config.features.empty_files {
         empty::find_empty_files(&scan_result.files, progress)
     } else {
         Vec::new()
     };
 
-    // ── Phase 4: Empty directory detection ───────────────────────────────────
+    // ── Phase 5: Empty directory detection ───────────────────────────────────
     let empty_dirs = if config.features.empty_dirs {
         empty::find_empty_dirs(&scan_result.directories, &scan_result.files, progress)
     } else {
         Vec::new()
     };
 
-    // ── Phase 5: Broken symlink detection ────────────────────────────────────
+    // ── Phase 6: Broken symlink detection ────────────────────────────────────
     let broken_symlinks = if config.features.broken_links {
         symlinks::find_broken_symlinks(&scan_result.symlinks, progress)
     } else {
@@ -117,6 +130,7 @@ pub fn scan(config: ScanConfig, progress: &dyn ProgressHandler) -> Result<ScanRe
             dirs_scanned: scan_result.total_dirs,
         },
         duplicates,
+        similar_images,
         empty_files,
         empty_dirs,
         broken_symlinks,

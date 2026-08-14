@@ -209,6 +209,57 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
         writeln!(out).unwrap();
     }
 
+    // Similar Images
+    if let Some(ref sim_report) = report.similar_images {
+        if !sim_report.groups.is_empty() {
+            writeln!(out, "── Similar Images {}", thin_sep).unwrap();
+            writeln!(
+                out,
+                "  Found {} similar image group{} ({} variant file{}, {} reclaimable)",
+                sim_report.total_groups,
+                if sim_report.total_groups == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                sim_report.total_similar_files,
+                if sim_report.total_similar_files == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                format_bytes(sim_report.reclaimable_bytes),
+            )
+            .unwrap();
+            writeln!(out).unwrap();
+
+            for (i, group) in sim_report.groups.iter().enumerate() {
+                writeln!(
+                    out,
+                    "  Cluster {} — Canonical: {} ({}, pHash: {})",
+                    i + 1,
+                    group.canonical.path.display(),
+                    format_bytes(group.canonical.size),
+                    &group.perceptual_hash[..8.min(group.perceptual_hash.len())]
+                )
+                .unwrap();
+
+                for similar in &group.similar_files {
+                    writeln!(
+                        out,
+                        "    [SIMILAR {:.1}%] {}  ({}, dist: {})",
+                        similar.similarity_percentage,
+                        similar.file.path.display(),
+                        format_bytes(similar.file.size),
+                        similar.distance,
+                    )
+                    .unwrap();
+                }
+                writeln!(out).unwrap();
+            }
+        }
+    }
+
     // Summary
     writeln!(out, "── Summary {}", thin_sep).unwrap();
     writeln!(
@@ -235,6 +286,24 @@ fn generate_text_report(report: &ScanReport) -> Result<String> {
         .unwrap();
     } else {
         writeln!(out, "  Duplicates:       None").unwrap();
+    }
+
+    if let Some(ref sim_report) = report.similar_images {
+        if sim_report.total_groups > 0 {
+            writeln!(
+                out,
+                "  Similar Images:   {} cluster{} ({} variants, {} reclaimable)",
+                sim_report.total_groups,
+                if sim_report.total_groups == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                sim_report.total_similar_files,
+                format_bytes(sim_report.reclaimable_bytes),
+            )
+            .unwrap();
+        }
     }
 
     writeln!(out, "  Empty files:      {}", report.empty_files.len()).unwrap();

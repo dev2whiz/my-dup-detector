@@ -28,6 +28,8 @@ pub struct FeatureFlags {
     pub empty_files: bool,
     pub empty_dirs: bool,
     pub broken_links: bool,
+    pub similar_images: bool,
+    pub similarity_threshold: f64,
 }
 
 impl Default for FeatureFlags {
@@ -37,6 +39,8 @@ impl Default for FeatureFlags {
             empty_files: true,
             empty_dirs: true,
             broken_links: true,
+            similar_images: false,
+            similarity_threshold: 0.90,
         }
     }
 }
@@ -114,6 +118,8 @@ pub enum ScanPhase {
     EmptyDirDetection,
     /// Detecting broken symbolic links.
     BrokenLinkDetection,
+    /// Computing perceptual image hashes and detecting visual similarities.
+    PerceptualHashing,
     /// Generating report.
     ReportGeneration,
 }
@@ -128,6 +134,7 @@ impl std::fmt::Display for ScanPhase {
             ScanPhase::EmptyFileDetection => write!(f, "Finding empty files"),
             ScanPhase::EmptyDirDetection => write!(f, "Finding empty directories"),
             ScanPhase::BrokenLinkDetection => write!(f, "Finding broken symlinks"),
+            ScanPhase::PerceptualHashing => write!(f, "Analyzing image similarities"),
             ScanPhase::ReportGeneration => write!(f, "Generating report"),
         }
     }
@@ -215,6 +222,41 @@ pub struct DuplicateReport {
     pub groups: Vec<DuplicateGroup>,
 }
 
+/// A file entry that is perceptually similar to a canonical original image.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarImageEntry {
+    /// File metadata.
+    pub file: FileEntry,
+    /// Visual similarity percentage compared to canonical image (e.g. 95.5%).
+    pub similarity_percentage: f64,
+    /// Perceptual Hamming distance from canonical image hash (0 = identical).
+    pub distance: u32,
+}
+
+/// A cluster of perceptually similar images sharing visual characteristics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarImageGroup {
+    /// Canonical highest-resolution or original image in group.
+    pub canonical: FileEntry,
+    /// Other image files matching canonical image within threshold.
+    pub similar_files: Vec<SimilarImageEntry>,
+    /// Perceptual hash string of canonical image.
+    pub perceptual_hash: String,
+}
+
+/// Perceptual image similarity detection results.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SimilarImageReport {
+    /// Total number of similar image clusters.
+    pub total_groups: usize,
+    /// Total number of similar image files (excluding canonical originals).
+    pub total_similar_files: usize,
+    /// Reclaimable capacity across similar image groups.
+    pub reclaimable_bytes: u64,
+    /// All similar image groups.
+    pub groups: Vec<SimilarImageGroup>,
+}
+
 /// The complete result of a scan operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanReport {
@@ -224,6 +266,8 @@ pub struct ScanReport {
     pub scan_info: ScanInfo,
     /// Duplicate file results.
     pub duplicates: DuplicateReport,
+    /// Similar image results (when --similar-images is enabled).
+    pub similar_images: Option<SimilarImageReport>,
     /// Empty files found.
     pub empty_files: Vec<PathBuf>,
     /// Empty directories found.
