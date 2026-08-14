@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use dupfinder_core::clean::{
     execute_clean_plan, generate_clean_plan, CleanAction, CleanOptions, CleanPlan, DeletionMethod,
+    RemediationStrategy,
 };
 use dupfinder_core::safety::is_elevated_privilege;
 use dupfinder_core::types::{CacheConfig, FeatureFlags, FilterConfig, ScanConfig};
@@ -32,6 +33,14 @@ pub struct CleanArgs {
     /// Permanently unlink files from disk (WARNING: cannot be undone).
     #[arg(long)]
     pub permanent: bool,
+
+    /// Replace duplicate files with POSIX/NTFS hardlinks pointing to original file.
+    #[arg(long, conflicts_with_all = ["permanent", "reflink"])]
+    pub hardlink: bool,
+
+    /// Replace duplicate files with Copy-on-Write clones (macOS clonefile / Linux FICLONE).
+    #[arg(long, conflicts_with_all = ["permanent", "hardlink"])]
+    pub reflink: bool,
 
     /// Dry run mode: output planned remediation actions without modifying disk.
     #[arg(long)]
@@ -109,11 +118,15 @@ pub fn run(args: CleanArgs) -> Result<()> {
         bail!("Execution blocked: running as root/administrator without --allow-root");
     }
 
-    // Determine deletion method
-    let method = if args.permanent {
-        DeletionMethod::Permanent
+    // Determine remediation strategy
+    let strategy = if args.hardlink {
+        RemediationStrategy::Hardlink
+    } else if args.reflink {
+        RemediationStrategy::Reflink
+    } else if args.permanent {
+        RemediationStrategy::Delete(DeletionMethod::Permanent)
     } else {
-        DeletionMethod::Trash
+        RemediationStrategy::Delete(DeletionMethod::Trash)
     };
 
     // 2. Configure scan parameters
@@ -166,7 +179,7 @@ pub fn run(args: CleanArgs) -> Result<()> {
 
     // 4. Generate clean plan
     let clean_options = CleanOptions {
-        method,
+        strategy,
         clean_empty_files: args.clean_empty_files,
         clean_empty_dirs: args.clean_empty_dirs,
         include_hidden: args.include_hidden,
@@ -177,32 +190,36 @@ pub fn run(args: CleanArgs) -> Result<()> {
         .context("Failed to generate safe cleanup plan")?;
 
     if plan.actions.is_empty() {
-        println!("\n✨ No duplicate or redundant files found to clean.");
+        println!("\n✨ No duplicate or redundant files found to remediate.");
         return Ok(());
     }
 
     // 5. Interactive review mode
     if args.interactive && !args.dry_run {
-        plan = run_interactive_review(plan)?;
+        plan = run_interactive_review(plan, strategy)?;
     }
 
     // 6. Display Plan Summary
-    print_plan_summary(&plan, method, args.dry_run);
+    print_plan_summary(&plan, strategy, args.dry_run);
 
-    if plan.total_files_to_remove == 0 && plan.total_dirs_to_remove == 0 {
-        println!("\nNothing marked for removal.");
+    if plan.total_files_to_remediate == 0 && plan.total_dirs_to_remove == 0 {
+        if plan.already_linked_count > 0 {
+            println!("\nAll duplicates are already hardlinked to their originals.");
+        } else {
+            println!("\nNothing marked for remediation.");
+        }
         return Ok(());
     }
 
     // 7. Confirmation prompt if not dry-run and not auto-confirmed
-    if !args.dry_run && !args.yes && !args.interactive && !confirm_action(method)? {
+    if !args.dry_run && !args.yes && !args.interactive && !confirm_action(strategy)? {
         println!("Operation cancelled by user.");
         return Ok(());
     }
 
     // 8. Execute Clean Plan
-    let exec_res = execute_clean_plan(&plan, method, args.dry_run, &progress_handler)
-        .context("Failed while executing cleanup operations")?;
+    let exec_res = execute_clean_plan(&plan, strategy, args.dry_run, &progress_handler)
+        .context("Failed while executing remediation operations")?;
 
     // 9. Output Execution Summary
     print_execution_summary(&exec_res, args.dry_run);
@@ -223,13 +240,15 @@ pub fn run(args: CleanArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_plan_summary(plan: &CleanPlan, method: DeletionMethod, dry_run: bool) {
+fn print_plan_summary(plan: &CleanPlan, strategy: RemediationStrategy, dry_run: bool) {
     let mode_str = if dry_run {
         "DRY RUN (Simulated - No Files Modified)"
     } else {
-        match method {
-            DeletionMethod::Trash => "OS Trash / Recycle Bin",
-            DeletionMethod::Permanent => "Permanent Unlink",
+        match strategy {
+            RemediationStrategy::Delete(DeletionMethod::Trash) => "OS Trash / Recycle Bin",
+            RemediationStrategy::Delete(DeletionMethod::Permanent) => "Permanent Unlink",
+            RemediationStrategy::Hardlink => "Hardlink Deduplication (POSIX/NTFS)",
+            RemediationStrategy::Reflink => "Copy-on-Write (Reflink / APFS clone)",
         }
     };
 
@@ -237,12 +256,15 @@ fn print_plan_summary(plan: &CleanPlan, method: DeletionMethod, dry_run: bool) {
     println!("           DUPFINDER REMEDIATION PLAN                   ");
     println!("========================================================");
     println!(" Mode:                  {}", mode_str);
-    println!(" Duplicate Files:       {}", plan.total_files_to_remove);
+    println!(" Target Files:          {}", plan.total_files_to_remediate);
     println!(" Empty Directories:     {}", plan.total_dirs_to_remove);
     println!(
         " Reclaimable Space:     {}",
         format_bytes(plan.total_bytes_reclaimable)
     );
+    if plan.already_linked_count > 0 {
+        println!(" 🔗 Already Linked:      {}", plan.already_linked_count);
+    }
     if plan.blocked_count > 0 {
         println!(" ⚠️ Blocked (Protected): {}", plan.blocked_count);
     }
@@ -266,6 +288,9 @@ fn print_execution_summary(res: &dupfinder_core::clean::CleanExecutionResult, dr
         " Space Reclaimed:       {}",
         format_bytes(res.bytes_reclaimed)
     );
+    if res.already_linked > 0 {
+        println!(" Already Linked:        {}", res.already_linked);
+    }
     if !res.failed.is_empty() {
         println!(" ❌ Errors Encountered: {}", res.failed.len());
         for (path, err) in &res.failed {
@@ -275,11 +300,19 @@ fn print_execution_summary(res: &dupfinder_core::clean::CleanExecutionResult, dr
     println!("========================================================\n");
 }
 
-fn confirm_action(method: DeletionMethod) -> Result<bool> {
-    let prompt = match method {
-        DeletionMethod::Trash => "Proceed to move duplicate files to Trash? [y/N]: ",
-        DeletionMethod::Permanent => {
+fn confirm_action(strategy: RemediationStrategy) -> Result<bool> {
+    let prompt = match strategy {
+        RemediationStrategy::Delete(DeletionMethod::Trash) => {
+            "Proceed to move duplicate files to Trash? [y/N]: "
+        }
+        RemediationStrategy::Delete(DeletionMethod::Permanent) => {
             "\x1b[1;31mWARNING: This will permanently delete files. Proceed? [y/N]: \x1b[0m"
+        }
+        RemediationStrategy::Hardlink => {
+            "Proceed to replace duplicate files with hardlinks to originals? [y/N]: "
+        }
+        RemediationStrategy::Reflink => {
+            "Proceed to replace duplicate files with CoW (reflink) clones? [y/N]: "
         }
     };
 
@@ -296,7 +329,7 @@ fn confirm_action(method: DeletionMethod) -> Result<bool> {
     Ok(input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("yes"))
 }
 
-fn run_interactive_review(mut plan: CleanPlan) -> Result<CleanPlan> {
+fn run_interactive_review(mut plan: CleanPlan, strategy: RemediationStrategy) -> Result<CleanPlan> {
     let mut approved_actions = Vec::new();
     let mut apply_all = false;
     let mut total_files = 0;
@@ -305,9 +338,18 @@ fn run_interactive_review(mut plan: CleanPlan) -> Result<CleanPlan> {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
+    let action_verb = match strategy {
+        RemediationStrategy::Delete(_) => "delete",
+        RemediationStrategy::Hardlink => "hardlink",
+        RemediationStrategy::Reflink => "reflink",
+    };
+
     for action in plan.actions {
         if apply_all {
-            if let CleanAction::DeleteDuplicate { size, .. } = &action {
+            if let CleanAction::DeleteDuplicate { size, .. }
+            | CleanAction::HardlinkDuplicate { size, .. }
+            | CleanAction::ReflinkDuplicate { size, .. } = &action
+            {
                 total_files += 1;
                 total_bytes += *size;
             }
@@ -320,11 +362,24 @@ fn run_interactive_review(mut plan: CleanPlan) -> Result<CleanPlan> {
                 path,
                 size,
                 original,
+            }
+            | CleanAction::HardlinkDuplicate {
+                path,
+                size,
+                original,
+            }
+            | CleanAction::ReflinkDuplicate {
+                path,
+                size,
+                original,
             } => {
                 println!("\n--------------------------------------------------------");
                 println!("Original:  {}", original.display());
                 println!("Duplicate: {} ({})", path.display(), format_bytes(*size));
-                print!("Action: [k]eep original & delete dup, [s]kip, [a]pply all, [q]uit? ");
+                print!(
+                    "Action: [k]eep original & {} dup, [s]kip, [a]pply all, [q]uit? ",
+                    action_verb
+                );
                 io::stdout().flush().context("Failed to flush stdout")?;
 
                 let mut choice = String::new();
@@ -361,7 +416,7 @@ fn run_interactive_review(mut plan: CleanPlan) -> Result<CleanPlan> {
     }
 
     plan.actions = approved_actions;
-    plan.total_files_to_remove = total_files;
+    plan.total_files_to_remediate = total_files;
     plan.total_bytes_reclaimable = total_bytes;
     Ok(plan)
 }

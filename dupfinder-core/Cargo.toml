@@ -20,6 +20,7 @@ chrono.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 trash.workspace = true
+reflink-copy.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

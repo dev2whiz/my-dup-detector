@@ -1,13 +1,14 @@
-//! Safe cleanup, deletion, and remediation engine.
+//! Safe cleanup, deletion, hardlinking, and remediation engine.
 //!
 //! Provides the core business logic for:
-//! - Planning duplicate and empty item deletions
-//! - Validating safety and preserving original files
-//! - Moving files to OS Recycle Bin / Trash or permanently unlinking
+//! - Planning duplicate deletion, hardlinking, and reflinking (CoW clones)
+//! - Detecting same-inode files to prevent self-destruction
+//! - Performing atomic link replacement
 //! - Producing audit remediation manifests and dry-run execution plans
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,9 @@ use crate::safety::{
 };
 use crate::types::ScanReport;
 
-/// The deletion method to apply during cleanup.
+static ATOMIC_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
+/// The deletion method to apply during file deletion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DeletionMethod {
     /// Move items to the OS Recycle Bin / Trash (default).
@@ -30,31 +33,36 @@ pub enum DeletionMethod {
     Permanent,
 }
 
-/// Options configuring the cleanup operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Strategy for remediating duplicate files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemediationStrategy {
+    /// Delete duplicate files (via Trash or Permanent unlink).
+    Delete(DeletionMethod),
+    /// Replace duplicate files with POSIX/NTFS hardlinks pointing to original file.
+    Hardlink,
+    /// Replace duplicate files with Copy-on-Write clones (macOS clonefile / Linux FICLONE).
+    Reflink,
+}
+
+impl Default for RemediationStrategy {
+    fn default() -> Self {
+        Self::Delete(DeletionMethod::Trash)
+    }
+}
+
+/// Options configuring the cleanup and remediation operation.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CleanOptions {
-    /// The deletion method (Trash by default).
-    pub method: DeletionMethod,
+    /// Strategy to remediate duplicates (Delete, Hardlink, Reflink).
+    pub strategy: RemediationStrategy,
     /// Whether to remove detected empty files.
     pub clean_empty_files: bool,
     /// Whether to remove detected empty directories.
     pub clean_empty_dirs: bool,
-    /// Whether to include hidden files in deletion.
+    /// Whether to include hidden files in remediation.
     pub include_hidden: bool,
     /// Dry run mode (simulate operations without disk modification).
     pub dry_run: bool,
-}
-
-impl Default for CleanOptions {
-    fn default() -> Self {
-        Self {
-            method: DeletionMethod::Trash,
-            clean_empty_files: false,
-            clean_empty_dirs: false,
-            include_hidden: false,
-            dry_run: false,
-        }
-    }
 }
 
 /// A specific remediation action planned for a target path.
@@ -66,6 +74,20 @@ pub enum CleanAction {
         size: u64,
         original: PathBuf,
     },
+    /// Replace a duplicate copy with a hardlink to the original.
+    HardlinkDuplicate {
+        path: PathBuf,
+        size: u64,
+        original: PathBuf,
+    },
+    /// Replace a duplicate copy with a reflink (CoW clone) to the original.
+    ReflinkDuplicate {
+        path: PathBuf,
+        size: u64,
+        original: PathBuf,
+    },
+    /// Files are already hardlinked to the same inode (no disk write required).
+    AlreadyLinked { path: PathBuf, original: PathBuf },
     /// Delete a zero-byte file.
     DeleteEmptyFile { path: PathBuf },
     /// Delete a recursively empty directory.
@@ -82,6 +104,9 @@ impl CleanAction {
     pub fn target_path(&self) -> &Path {
         match self {
             CleanAction::DeleteDuplicate { path, .. }
+            | CleanAction::HardlinkDuplicate { path, .. }
+            | CleanAction::ReflinkDuplicate { path, .. }
+            | CleanAction::AlreadyLinked { path, .. }
             | CleanAction::DeleteEmptyFile { path }
             | CleanAction::DeleteEmptyDir { path }
             | CleanAction::Blocked { path, .. }
@@ -93,19 +118,22 @@ impl CleanAction {
     #[must_use]
     pub fn reclaimable_bytes(&self) -> u64 {
         match self {
-            CleanAction::DeleteDuplicate { size, .. } => *size,
+            CleanAction::DeleteDuplicate { size, .. }
+            | CleanAction::HardlinkDuplicate { size, .. }
+            | CleanAction::ReflinkDuplicate { size, .. } => *size,
             _ => 0,
         }
     }
 }
 
-/// A structured plan describing all cleanup actions before execution.
+/// A structured plan describing all cleanup/remediation actions before execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanPlan {
     pub actions: Vec<CleanAction>,
-    pub total_files_to_remove: usize,
+    pub total_files_to_remediate: usize,
     pub total_dirs_to_remove: usize,
     pub total_bytes_reclaimable: u64,
+    pub already_linked_count: usize,
     pub blocked_count: usize,
     pub skipped_count: usize,
 }
@@ -122,26 +150,65 @@ pub struct RemediationManifestEntry {
     pub error: Option<String>,
 }
 
-/// Summary result of executing a cleanup plan.
+/// Summary result of executing a remediation plan.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CleanExecutionResult {
     pub succeeded_files: usize,
     pub succeeded_dirs: usize,
     pub bytes_reclaimed: u64,
+    pub already_linked: usize,
     pub failed: Vec<(PathBuf, String)>,
     pub manifest: Vec<RemediationManifestEntry>,
+}
+
+/// Check if two paths point to the exact same file / inode on disk.
+#[must_use]
+pub fn are_same_inode(path_a: &Path, path_b: &Path) -> bool {
+    let meta_a = match fs::symlink_metadata(path_a) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let meta_b = match fs::symlink_metadata(path_b) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta_a.dev() == meta_b.dev() && meta_a.ino() == meta_b.ino()
+    }
+
+    #[cfg(windows)]
+    {
+        if let (Ok(can_a), Ok(can_b)) = (fs::canonicalize(path_a), fs::canonicalize(path_b)) {
+            can_a == can_b
+        } else {
+            false
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        if let (Ok(can_a), Ok(can_b)) = (fs::canonicalize(path_a), fs::canonicalize(path_b)) {
+            can_a == can_b
+        } else {
+            false
+        }
+    }
 }
 
 /// Generate a verified `CleanPlan` from a `ScanReport`.
 pub fn generate_clean_plan(report: &ScanReport, options: &CleanOptions) -> Result<CleanPlan> {
     let mut actions = Vec::new();
-    let mut total_files_to_remove = 0;
+    let mut total_files_to_remediate = 0;
     let mut total_dirs_to_remove = 0;
     let mut total_bytes_reclaimable = 0;
+    let mut already_linked_count = 0;
     let mut blocked_count = 0;
     let mut skipped_count = 0;
 
-    // 1. Plan duplicate file deletions
+    // 1. Plan duplicate file remediations
     for group in &report.duplicates.groups {
         let original = &group.original.path;
 
@@ -178,13 +245,47 @@ pub fn generate_clean_plan(report: &ScanReport, options: &CleanOptions) -> Resul
                 continue;
             }
 
-            actions.push(CleanAction::DeleteDuplicate {
-                path: path.clone(),
-                size: duplicate.size,
-                original: original.clone(),
-            });
-            total_files_to_remove += 1;
-            total_bytes_reclaimable += duplicate.size;
+            // Check if already same inode (for hardlinks)
+            if matches!(options.strategy, RemediationStrategy::Hardlink)
+                && are_same_inode(original, path)
+            {
+                actions.push(CleanAction::AlreadyLinked {
+                    path: path.clone(),
+                    original: original.clone(),
+                });
+                already_linked_count += 1;
+                continue;
+            }
+
+            match options.strategy {
+                RemediationStrategy::Delete(_) => {
+                    actions.push(CleanAction::DeleteDuplicate {
+                        path: path.clone(),
+                        size: duplicate.size,
+                        original: original.clone(),
+                    });
+                    total_files_to_remediate += 1;
+                    total_bytes_reclaimable += duplicate.size;
+                }
+                RemediationStrategy::Hardlink => {
+                    actions.push(CleanAction::HardlinkDuplicate {
+                        path: path.clone(),
+                        size: duplicate.size,
+                        original: original.clone(),
+                    });
+                    total_files_to_remediate += 1;
+                    total_bytes_reclaimable += duplicate.size;
+                }
+                RemediationStrategy::Reflink => {
+                    actions.push(CleanAction::ReflinkDuplicate {
+                        path: path.clone(),
+                        size: duplicate.size,
+                        original: original.clone(),
+                    });
+                    total_files_to_remediate += 1;
+                    total_bytes_reclaimable += duplicate.size;
+                }
+            }
         }
     }
 
@@ -219,7 +320,7 @@ pub fn generate_clean_plan(report: &ScanReport, options: &CleanOptions) -> Resul
             }
 
             actions.push(CleanAction::DeleteEmptyFile { path: path.clone() });
-            total_files_to_remove += 1;
+            total_files_to_remediate += 1;
         }
     }
 
@@ -251,18 +352,19 @@ pub fn generate_clean_plan(report: &ScanReport, options: &CleanOptions) -> Resul
 
     Ok(CleanPlan {
         actions,
-        total_files_to_remove,
+        total_files_to_remediate,
         total_dirs_to_remove,
         total_bytes_reclaimable,
+        already_linked_count,
         blocked_count,
         skipped_count,
     })
 }
 
-/// Execute a `CleanPlan` according to the specified deletion method and dry-run flag.
+/// Execute a `CleanPlan` according to strategy and dry-run flag.
 pub fn execute_clean_plan(
     plan: &CleanPlan,
-    method: DeletionMethod,
+    strategy: RemediationStrategy,
     dry_run: bool,
     _progress: &dyn ProgressHandler,
 ) -> Result<CleanExecutionResult> {
@@ -277,6 +379,11 @@ pub fn execute_clean_plan(
                 size,
                 original,
             } => {
+                let method = match strategy {
+                    RemediationStrategy::Delete(m) => m,
+                    _ => DeletionMethod::Trash,
+                };
+
                 if dry_run {
                     result.succeeded_files += 1;
                     result.bytes_reclaimed += *size;
@@ -356,6 +463,186 @@ pub fn execute_clean_plan(
                 }
             }
 
+            CleanAction::HardlinkDuplicate {
+                path,
+                size,
+                original,
+            } => {
+                if dry_run {
+                    result.succeeded_files += 1;
+                    result.bytes_reclaimed += *size;
+                    result.manifest.push(RemediationManifestEntry {
+                        timestamp,
+                        path: path.clone(),
+                        action_type: "hardlink_duplicate (dry-run)".to_string(),
+                        size: *size,
+                        original: Some(original.clone()),
+                        status: "simulated".to_string(),
+                        error: None,
+                    });
+                    continue;
+                }
+
+                // Pre-execution TOCTOU check
+                if let Err(e) = verify_file_unmodified(path, *size) {
+                    let err_msg = e.to_string();
+                    result.failed.push((path.clone(), err_msg.clone()));
+                    result.manifest.push(RemediationManifestEntry {
+                        timestamp,
+                        path: path.clone(),
+                        action_type: "hardlink_duplicate".to_string(),
+                        size: *size,
+                        original: Some(original.clone()),
+                        status: "failed".to_string(),
+                        error: Some(err_msg),
+                    });
+                    continue;
+                }
+
+                // Atomic replacement via temporary sibling hardlink
+                let counter = ATOMIC_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                let tmp_name = format!(".dupfinder_tmplink_{}_{}.tmp", std::process::id(), counter);
+                let tmp_path = parent.join(tmp_name);
+
+                let link_res = fs::hard_link(original, &tmp_path)
+                    .and_then(|_| fs::rename(&tmp_path, path))
+                    .map_err(|e| {
+                        DupfinderError::RemediationError(format!("Hardlink error: {}", e))
+                    });
+
+                // Clean up temporary link if rename failed
+                if link_res.is_err() && tmp_path.exists() {
+                    let _ = fs::remove_file(&tmp_path);
+                }
+
+                match link_res {
+                    Ok(_) => {
+                        result.succeeded_files += 1;
+                        result.bytes_reclaimed += *size;
+                        result.manifest.push(RemediationManifestEntry {
+                            timestamp,
+                            path: path.clone(),
+                            action_type: "hardlink_duplicate".to_string(),
+                            size: *size,
+                            original: Some(original.clone()),
+                            status: "success".to_string(),
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        result.failed.push((path.clone(), err_msg.clone()));
+                        result.manifest.push(RemediationManifestEntry {
+                            timestamp,
+                            path: path.clone(),
+                            action_type: "hardlink_duplicate".to_string(),
+                            size: *size,
+                            original: Some(original.clone()),
+                            status: "failed".to_string(),
+                            error: Some(err_msg),
+                        });
+                    }
+                }
+            }
+
+            CleanAction::ReflinkDuplicate {
+                path,
+                size,
+                original,
+            } => {
+                if dry_run {
+                    result.succeeded_files += 1;
+                    result.bytes_reclaimed += *size;
+                    result.manifest.push(RemediationManifestEntry {
+                        timestamp,
+                        path: path.clone(),
+                        action_type: "reflink_duplicate (dry-run)".to_string(),
+                        size: *size,
+                        original: Some(original.clone()),
+                        status: "simulated".to_string(),
+                        error: None,
+                    });
+                    continue;
+                }
+
+                // Pre-execution TOCTOU check
+                if let Err(e) = verify_file_unmodified(path, *size) {
+                    let err_msg = e.to_string();
+                    result.failed.push((path.clone(), err_msg.clone()));
+                    result.manifest.push(RemediationManifestEntry {
+                        timestamp,
+                        path: path.clone(),
+                        action_type: "reflink_duplicate".to_string(),
+                        size: *size,
+                        original: Some(original.clone()),
+                        status: "failed".to_string(),
+                        error: Some(err_msg),
+                    });
+                    continue;
+                }
+
+                // Atomic replacement via temporary sibling reflink
+                let counter = ATOMIC_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                let tmp_name = format!(
+                    ".dupfinder_tmpreflink_{}_{}.tmp",
+                    std::process::id(),
+                    counter
+                );
+                let tmp_path = parent.join(tmp_name);
+
+                let reflink_res = reflink_copy::reflink(original, &tmp_path)
+                    .and_then(|_| fs::rename(&tmp_path, path))
+                    .map_err(|e| DupfinderError::RemediationError(format!("Reflink error: {}", e)));
+
+                if reflink_res.is_err() && tmp_path.exists() {
+                    let _ = fs::remove_file(&tmp_path);
+                }
+
+                match reflink_res {
+                    Ok(_) => {
+                        result.succeeded_files += 1;
+                        result.bytes_reclaimed += *size;
+                        result.manifest.push(RemediationManifestEntry {
+                            timestamp,
+                            path: path.clone(),
+                            action_type: "reflink_duplicate".to_string(),
+                            size: *size,
+                            original: Some(original.clone()),
+                            status: "success".to_string(),
+                            error: None,
+                        });
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        result.failed.push((path.clone(), err_msg.clone()));
+                        result.manifest.push(RemediationManifestEntry {
+                            timestamp,
+                            path: path.clone(),
+                            action_type: "reflink_duplicate".to_string(),
+                            size: *size,
+                            original: Some(original.clone()),
+                            status: "failed".to_string(),
+                            error: Some(err_msg),
+                        });
+                    }
+                }
+            }
+
+            CleanAction::AlreadyLinked { path, original } => {
+                result.already_linked += 1;
+                result.manifest.push(RemediationManifestEntry {
+                    timestamp,
+                    path: path.clone(),
+                    action_type: "already_hardlinked".to_string(),
+                    size: 0,
+                    original: Some(original.clone()),
+                    status: "skipped".to_string(),
+                    error: None,
+                });
+            }
+
             CleanAction::DeleteEmptyFile { path } => {
                 if dry_run {
                     result.succeeded_files += 1;
@@ -370,6 +657,11 @@ pub fn execute_clean_plan(
                     });
                     continue;
                 }
+
+                let method = match strategy {
+                    RemediationStrategy::Delete(m) => m,
+                    _ => DeletionMethod::Trash,
+                };
 
                 let delete_res = match method {
                     DeletionMethod::Trash => trash::delete(path).map_err(|e| {
@@ -548,11 +840,17 @@ mod tests {
         };
 
         let plan = generate_clean_plan(&report, &options).unwrap();
-        assert_eq!(plan.total_files_to_remove, 1);
+        assert_eq!(plan.total_files_to_remediate, 1);
         assert_eq!(plan.total_bytes_reclaimable, 7);
 
         let progress = SilentProgress;
-        let res = execute_clean_plan(&plan, DeletionMethod::Permanent, true, &progress).unwrap();
+        let res = execute_clean_plan(
+            &plan,
+            RemediationStrategy::Delete(DeletionMethod::Permanent),
+            true,
+            &progress,
+        )
+        .unwrap();
         assert_eq!(res.succeeded_files, 1);
         assert_eq!(res.bytes_reclaimed, 7);
 
@@ -575,10 +873,52 @@ mod tests {
 
         let plan = generate_clean_plan(&report, &options).unwrap();
         let progress = SilentProgress;
-        let res = execute_clean_plan(&plan, DeletionMethod::Permanent, false, &progress).unwrap();
+        let res = execute_clean_plan(
+            &plan,
+            RemediationStrategy::Delete(DeletionMethod::Permanent),
+            false,
+            &progress,
+        )
+        .unwrap();
 
         assert_eq!(res.succeeded_files, 1);
         assert!(orig.exists(), "Original file must be preserved");
         assert!(!dup.exists(), "Duplicate file must be deleted");
+    }
+
+    #[test]
+    fn test_execute_hardlink_deduplication() {
+        let dir = tempdir().unwrap();
+        let orig = dir.path().join("orig.txt");
+        let dup = dir.path().join("dup.txt");
+
+        fs::write(&orig, b"shared content").unwrap();
+        fs::write(&dup, b"shared content").unwrap();
+
+        assert!(!are_same_inode(&orig, &dup));
+
+        let report = make_test_report(orig.clone(), dup.clone(), 14);
+        let options = CleanOptions {
+            strategy: RemediationStrategy::Hardlink,
+            ..Default::default()
+        };
+
+        let plan = generate_clean_plan(&report, &options).unwrap();
+        assert_eq!(plan.total_files_to_remediate, 1);
+
+        let progress = SilentProgress;
+        let res =
+            execute_clean_plan(&plan, RemediationStrategy::Hardlink, false, &progress).unwrap();
+        assert_eq!(res.succeeded_files, 1);
+
+        // Both files exist and now share the exact same inode!
+        assert!(orig.exists());
+        assert!(dup.exists());
+        assert!(are_same_inode(&orig, &dup));
+
+        // Re-planning hardlink should now detect already linked
+        let plan_again = generate_clean_plan(&report, &options).unwrap();
+        assert_eq!(plan_again.already_linked_count, 1);
+        assert_eq!(plan_again.total_files_to_remediate, 0);
     }
 }
