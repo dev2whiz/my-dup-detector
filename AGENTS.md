@@ -24,10 +24,14 @@ The project is structured as a Cargo workspace with two primary crates:
 
 ## 2. Core Implementation Rules & Invariants
 
-1. **Cross-Platform Path Safety**:
-   - Always use `std::path::Path` and `std::path::PathBuf`.
-   - Never concatenate paths with string literals (`/` or `\`).
-   - Use the `dirs` crate for platform-specific cache and config directories (`~/Library/Caches` on macOS, `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows).
+1. **Strict Cross-Platform Compatibility (macOS, Linux, Windows)**:
+   - **MANDATORY**: All code, CLI commands, filesystem operations, and error recovery must work identically across macOS, Linux, and Windows.
+   - Always use `std::path::Path` and `std::path::PathBuf`. Never hardcode path separators (`/` or `\`) or assume Unix root directory layouts.
+   - Never write test fixtures that rely on platform-specific paths or shell scripts.
+   - Use cross-platform abstractions (e.g. `dirs` for cache/config locations, `trash` for OS Recycle Bin / Trash integration).
+   - For platform-specific features (e.g. macOS APFS `clonefile`, Linux Btrfs/XFS `FICLONE`, Windows NTFS junctions / hardlinks), always provide conditional compilation (`#[cfg(...)]`) and graceful fallback or clear messaging on unsupported platforms.
+   - Handle permission and symlink quirks gracefully (e.g. Windows Developer Mode vs elevated privilege requirements for symlinks).
+   - Ensure terminal input/output and TUI rendering (`crossterm` / `ratatui`) function seamlessly across Unix PTYs and Windows ConPTY.
 2. **Hashing & Performance**:
    - Respect the 3-stage dedup pipeline: (1) Size grouping -> (2) Partial BLAKE3 prefix hash -> (3) Full BLAKE3 hash.
    - Use streaming reads into BLAKE3 to prevent high memory consumption on large files.
@@ -35,10 +39,26 @@ The project is structured as a Cargo workspace with two primary crates:
 3. **Error Handling**:
    - Use `thiserror` for typed, library-level error variants in `dupfinder_core::errors::DupError`.
    - Use `anyhow` for top-level application error context and exit handling in `dupfinder-cli`.
-4. **Safety & Non-Destructive Operation**:
-   - The tool is designed for duplicate detection and analysis. Any file deletion or cleanup features must have explicit dry-run protection, safety checks, and confirmation steps.
-5. **Symlink Handling**:
-   - Symlink traversal and broken link detection must handle cross-platform differences (Unix vs Windows permissions) and avoid circular references.
+4. **Safety, Non-Destructive Operation & System Path Protection**:
+   - **STRICT INVARIANT**: The utility must NEVER delete, mutate, or hardlink system files, OS internals, installed applications, or user credential/config directories.
+   - **Path Blacklist Engine**: Strictly forbid operations targeting root directories (`/`, `C:\`), system hierarchies (`/System`, `/Library`, `/Applications`, `/usr`, `/etc`, `/bin`, `/sbin`, `/var`, `/proc`, `/sys`, `C:\Windows`, `C:\Program Files`, `C:\Program Files (x86)`, `C:\ProgramData`), toolchains (`.cargo`, `.rustup`, `node_modules`), and security/config vaults (`.ssh`, `.gnupg`, `.aws`, `.env`, `.git`).
+   - **Hidden File Protection**: Hidden files/folders (`.*`) are excluded from deletion by default.
+   - **Structural Sentinel Protection**: Empty file cleanup must protect critical structural files (e.g. `__init__.py`, `.gitkeep`, `.keep`, `.placeholder`).
+   - **Canonicalization Check**: Always canonicalize paths (`fs::canonicalize`) before evaluating safety boundaries to prevent path traversal bypasses.
+   - **Original Preservation Invariant**: A duplicate group must NEVER delete all copies; the designated original file MUST exist, be verified, and be preserved.
+   - **Trash-First Policy**: All deletions must default to the OS Recycle Bin / Trash via the `trash` crate. Permanent unlinking requires explicit `--permanent` + interactive confirmation. If the volume lacks trash support (e.g. NAS/USB), never silently fall back to permanent deletion without explicit user approval.
+   - **Mandatory Dry-Run Option**: Every remediation command must support `--dry-run` to preview operations without touching the disk.
+5. **Concurrency & Filesystem Race Safety (TOCTOU & Linking Invariants)**:
+   - **Pre-Execution Inode Re-Stat**: Immediately prior to deleting or linking, re-stat file metadata (`size`, `mtime`, `device`, `inode`, `file_type`) to verify it has not been replaced by a symlink or mutated.
+   - **Same-Inode Invariant**: Detect when files already share an inode (`st_dev`, `st_ino`) before attempting hardlinking to prevent inode self-destruction and duplicate accounting.
+   - **Atomic Replacement Pattern**: Always create temporary links before renaming over duplicate targets during hardlinking/reflinking.
+   - **No Shell Interpolation**: Never pass file paths through a shell wrapper (`sh -c`, `cmd.exe`) when launching external tools.
+6. **Symlink Handling**:
+   - Symlink traversal and broken link detection must handle cross-platform differences (Unix vs Windows permissions) and avoid circular references. Never dereference symlinks during deletion.
+7. **No Elevated Privileges (Root / Administrator Protection)**:
+   - **MANDATORY**: The utility and AI Agent tasks must operate exclusively with standard, unprivileged user accounts.
+   - **Never run agent commands with `sudo` or elevated privileges**.
+   - The CLI must inspect runtime privilege levels: if running as `root` (Unix `UID 0`) or Windows Administrator during any remediation or cleanup action, it must display a prominent security warning regarding unintended system-wide side effects and require explicit confirmation / flag (`--allow-root` / `--allow-admin`).
 
 ---
 

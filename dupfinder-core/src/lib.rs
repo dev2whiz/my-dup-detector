@@ -5,6 +5,7 @@
 //! standalone library by other applications.
 
 pub mod cache;
+pub mod clean;
 pub mod dedup;
 pub mod empty;
 pub mod errors;
@@ -13,6 +14,7 @@ pub mod hasher;
 pub mod ignore;
 pub mod progress;
 pub mod report;
+pub mod safety;
 pub mod scanner;
 pub mod symlinks;
 pub mod types;

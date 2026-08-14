@@ -19,6 +19,7 @@ globset.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
+trash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
