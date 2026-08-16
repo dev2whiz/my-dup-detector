@@ -1,5 +1,10 @@
 # dupfinder
 
+[![GitHub Release](https://img.shields.io/github/v/release/dev2whiz/my-dup-detector?style=flat-square&color=blue)](https://github.com/dev2whiz/my-dup-detector/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Rust Version](https://img.shields.io/badge/rustc-1.70%2B-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Platform Support](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg?style=flat-square)](https://github.com/dev2whiz/my-dup-detector)
+
 A fast, cross-platform CLI tool for detecting duplicate files, similar images, empty files/folders, and broken symlinks with safe remediation guardrails and interactive terminal inspection.
 
 Inspired by [czkawka](https://github.com/qarmin/czkawka) and [rmlint](https://github.com/sahib/rmlint).
